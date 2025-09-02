@@ -1,0 +1,50 @@
+menu "EaveSdroP32 Configuration"
+
+  menu "WiFi AP Settings"
+    config WIFI_AP_SSID
+      string "WiFi AP SSID"
+      default "EaveSdroP32"
+      help
+        SSID for the device SoftAP.
+
+    config WIFI_AP_APPEND_MAC
+      bool "Append device MAC to SSID"
+      default n
+      help
+        If enabled, the device will append a short hex suffix derived from its MAC address
+        (for example "-A1B2C3") to the configured SSID at runtime to make SSIDs unique.
+
+    config WIFI_AP_PASSWORD
+      string "WiFi AP Password"
+      default "3avesdrop"
+      help
+        Password used by the device SoftAP. Avoid exposing this over unprotected interfaces.
+  endmenu
+
+  menu "Audio Stream Settings"
+    config AUDIO_STREAM_SAMPLE_RATE
+      int "I2S Sample Rate (Hz)"
+      default 16000
+      help
+        Set the I2S sample rate (Hz).
+
+    config AUDIO_STREAM_I2S_BCLK_IO
+      int "I2S BCLK GPIO"
+      default 3
+      help
+        Set the GPIO number for I2S BCLK.
+
+    config AUDIO_STREAM_I2S_WS_IO
+      int "I2S WS GPIO"
+      default 4
+      help
+        Set the GPIO number for I2S WS.
+
+    config AUDIO_STREAM_I2S_DATA_IN_IO
+      int "I2S Data In GPIO"
+      default 2
+      help
+        Set the GPIO number for I2S Data In.
+  endmenu
+
+endmenu

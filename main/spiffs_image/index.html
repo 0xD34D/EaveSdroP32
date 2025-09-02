@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>EaveSdroP32</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #1e293b 0%, #64748b 100%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      margin-bottom: 2rem;
+      text-align: center;
+      letter-spacing: 1px;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    #streamButton {
+      background: #38bdf8;
+      color: #fff;
+      border: none;
+      border-radius: 1.5rem;
+      padding: 1rem 2.5rem;
+      font-size: 1.2rem;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(56, 189, 248, 0.2);
+      transition: background 0.2s, transform 0.2s;
+    }
+
+    /* Recording (streaming) state: red button */
+    #streamButton.recording {
+      background: #ef4444;
+      /* red */
+      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
+    }
+
+    #streamButton.recording:hover {
+      background: #dc2626;
+      transform: scale(1.03);
+    }
+
+    #streamButton:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Only apply blue hover when NOT recording */
+    #streamButton:not(.recording):hover:not(:disabled) {
+      background: #0ea5e9;
+      transform: scale(1.05);
+    }
+
+    /* Responsive styles */
+    @media (max-width: 600px) {
+      h1 {
+        font-size: 1.4rem;
+        margin-bottom: 1.2rem;
+      }
+
+      #streamButton {
+        padding: 0.8rem 1.2rem;
+        font-size: 1rem;
+        border-radius: 1rem;
+      }
+
+      body {
+        padding: 1rem;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <h1>EaveSdroP32 Audio Stream</h1>
+  <button id="streamButton" onclick="toggleStream()">Start Stream</button>
+  <script>
+    let audioContext;
+    let scriptProcessor;
+    let audioQueue = [];
+    let sampleRate = 16000; // Default fallback
+    let jitterBufferSize = 5; // Number of blocks to buffer before playback
+
+    // New globals to control the connection
+    let ws = null;
+    let isStreaming = false;
+
+    async function getSampleRate() {
+      try {
+        const response = await fetch('/config');
+        if (response.ok) {
+          const config = await response.json();
+          if (config.sample_rate) {
+            sampleRate = config.sample_rate;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not fetch sample rate, using default:", sampleRate);
+      }
+    }
+
+    async function start() {
+      const startButton = document.getElementById('streamButton');
+      if (isStreaming) return;
+      startButton.innerText = 'Streaming...';
+      startButton.disabled = true;
+
+      await getSampleRate();
+
+      audioContext = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: sampleRate
+      });
+      console.log("AudioContext sample rate:", audioContext.sampleRate);
+      if (audioContext.sampleRate !== sampleRate) {
+        alert("Warning: AudioContext sample rate is " + audioContext.sampleRate + " Hz. Audio may sound distorted.");
+      }
+
+      // On mobile, AudioContext must be resumed by a user gesture.
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      ws = new WebSocket("ws://" + location.host + "/ws");
+      ws.binaryType = 'arraybuffer';
+
+      scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1);
+      scriptProcessor.connect(audioContext.destination);
+      scriptProcessor.onaudioprocess = function (e) {
+        // Only start playback when buffer is primed
+        if (audioQueue.length >= jitterBufferSize) {
+          let buffer = audioQueue.shift();
+          e.outputBuffer.getChannelData(0).set(buffer);
+        } else {
+          // Fill with silence if not enough data
+          e.outputBuffer.getChannelData(0).fill(0);
+        }
+      };
+
+      ws.onmessage = function (event) {
+        if (event.data.byteLength > 0) {
+          let rawData = new Int32Array(event.data);
+          let floatData = new Float32Array(rawData.length);
+
+          for (let i = 0; i < rawData.length; i++) {
+            // Extract top 24 bits, sign-extend
+            let sample = rawData[i] >> 8; // 24-bit signed
+            // Convert to float in range [-1.0, 1.0]
+            floatData[i] = sample / 8388608.0;
+          }
+
+          audioQueue.push(floatData);
+        }
+      };
+
+      ws.onopen = function () {
+        isStreaming = true;
+        // Ensure the visual update is applied immediately on mobile (forces repaint)
+        requestAnimationFrame(() => {
+          startButton.classList.add('recording');
+          // Force a reflow to make sure the style change is painted on some Chrome/Android builds
+          void startButton.offsetHeight;
+          startButton.innerText = 'Stop Stream';
+          startButton.disabled = false;
+        });
+      };
+
+      ws.onclose = ws.onerror = function () {
+        // Clean up when socket closes or errors
+        if (isStreaming) toggleStream(); // will call stop()
+      };
+    }
+
+    function stop() {
+      const startButton = document.getElementById('streamButton');
+      // Close websocket
+      if (ws) {
+        try { ws.close(); } catch (e) { /* ignore */ }
+        ws = null;
+      }
+
+      // Stop audio processing
+      if (scriptProcessor) {
+        try {
+          scriptProcessor.disconnect();
+          scriptProcessor.onaudioprocess = null;
+        } catch (e) { /* ignore */ }
+        scriptProcessor = null;
+      }
+
+      // Close audio context
+      if (audioContext) {
+        try {
+          audioContext.close();
+        } catch (e) { /* ignore */ }
+        audioContext = null;
+      }
+
+      // Reset queue and state
+      audioQueue = [];
+      isStreaming = false;
+
+      // Update UI
+      startButton.classList.remove('recording');
+      startButton.innerText = 'Start Stream';
+      startButton.disabled = false;
+    }
+
+    // Toggle handler called from the button
+    function toggleStream() {
+      const startButton = document.getElementById('streamButton');
+      if (!isStreaming) {
+        // start streaming
+        start();
+      } else {
+        // stop streaming
+        // disable button briefly to avoid double clicks
+        startButton.disabled = true;
+        stop();
+      }
+    }
+  </script>
+</body>
+
+</html>
