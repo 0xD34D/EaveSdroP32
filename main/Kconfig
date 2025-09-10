@@ -19,6 +19,21 @@ menu "EaveSdroP32 Configuration"
       default "3avesdrop"
       help
         Password used by the device SoftAP. Avoid exposing this over unprotected interfaces.
+
+    config WIFI_AP_TX_POWER_MIN
+      int "WiFi AP Min TX Power (0.25 dBm units)"
+      default 20
+      help
+        Minimum transmit power for WiFi AP in 0.25 dBm units (e.g., 20 = 5 dBm).  Used for
+        power saving when no clients are connected.
+
+    config WIFI_AP_TX_POWER_MAX
+      int "WiFi AP Max TX Power (0.25 dBm units)"
+      default 80
+      help
+        Maximum transmit power for WiFi AP in 0.25 dBm units (e.g., 80 = 20 dBm).  Used when
+        clients are connected.
+
   endmenu
 
   menu "Audio Stream Settings"

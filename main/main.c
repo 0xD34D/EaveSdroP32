@@ -17,8 +17,29 @@
 
 #define WIFI_SSID_PREFIX CONFIG_WIFI_AP_SSID
 #define WIFI_PASSWORD CONFIG_WIFI_AP_PASSWORD
+#define MIN_TX_POWER CONFIG_WIFI_AP_TX_POWER_MIN
+#define MAX_TX_POWER CONFIG_WIFI_AP_TX_POWER_MAX
 
 static const char *TAG = "EaveSdroP32";
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data) {
+  if (event_base == WIFI_EVENT) {
+    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+      wifi_event_ap_staconnected_t *event =
+          (wifi_event_ap_staconnected_t *)event_data;
+      ESP_LOGI(TAG, "Station connected, MAC:" MACSTR ", AID=%d",
+               MAC2STR(event->mac), event->aid);
+      ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(80));
+    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+      wifi_event_ap_stadisconnected_t *event =
+          (wifi_event_ap_stadisconnected_t *)event_data;
+      ESP_LOGI(TAG, "Station disconnected, MAC:" MACSTR ", AID=%d",
+               MAC2STR(event->mac), event->aid);
+      ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(MIN_TX_POWER));
+    }
+  }
+}
 
 void wifi_init_softap() {
   ESP_LOGI(TAG, "Initializing WiFi AP mode");
@@ -29,6 +50,10 @@ void wifi_init_softap() {
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+  ESP_ERROR_CHECK(esp_event_handler_register(
+      WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &wifi_event_handler, NULL));
+  ESP_ERROR_CHECK(esp_event_handler_register(
+      WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, &wifi_event_handler, NULL));
 
   char ssid[256];
   // Get base MAC address
@@ -55,6 +80,7 @@ void wifi_init_softap() {
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
   ESP_ERROR_CHECK(esp_wifi_start());
+  ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(MIN_TX_POWER));
 
   ESP_LOGI(TAG, "WiFi AP started. SSID: %s", ssid);
 }
