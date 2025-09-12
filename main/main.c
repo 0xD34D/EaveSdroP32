@@ -20,6 +20,9 @@
 #define MIN_TX_POWER CONFIG_WIFI_AP_TX_POWER_MIN
 #define MAX_TX_POWER CONFIG_WIFI_AP_TX_POWER_MAX
 
+// Channel scan interval in milliseconds (e.g., every 2 minutes)
+#define CHANNEL_SCAN_INTERVAL_MS (2 * 60 * 1000)
+
 static const char *TAG = "EaveSdroP32";
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -50,17 +53,16 @@ void wifi_init_softap() {
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+  // Register event handlers for AP mode
   ESP_ERROR_CHECK(esp_event_handler_register(
       WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &wifi_event_handler, NULL));
   ESP_ERROR_CHECK(esp_event_handler_register(
       WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, &wifi_event_handler, NULL));
 
   char ssid[256];
-  // Get base MAC address
 #ifdef CONFIG_WIFI_AP_APPEND_MAC
   uint8_t mac[6];
   ESP_ERROR_CHECK(esp_efuse_mac_get_default(mac));
-
   snprintf(ssid, sizeof(ssid), WIFI_SSID_PREFIX "-%02x%02x%02x%02x%02x%02x",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 #else
@@ -77,7 +79,7 @@ void wifi_init_softap() {
   };
   strncpy((char *)wifi_config.ap.ssid, ssid, sizeof(wifi_config.ap.ssid));
 
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
   ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
   ESP_ERROR_CHECK(esp_wifi_start());
   ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(MIN_TX_POWER));
@@ -186,6 +188,68 @@ void start_http_server() {
   }
 }
 
+uint8_t choose_best_channel() {
+  wifi_scan_config_t scan_config = {0};
+  uint16_t max_aps = 32;
+  wifi_ap_record_t ap_records[max_aps];
+  uint8_t channels[3] = {1, 6, 11};  // Non-overlapping channels
+  int rssi_sum[3] = {0, 0, 0};
+
+  ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true));
+  uint16_t ap_count = 0;
+  ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+  if (ap_count > max_aps) ap_count = max_aps;
+  ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_records));
+
+  for (int i = 0; i < ap_count; ++i) {
+    uint8_t ch = ap_records[i].primary;
+    int rssi = ap_records[i].rssi;
+    for (int j = 0; j < 3; ++j) {
+      // Count APs on the channel and adjacent channels (overlap)
+      if (ch == channels[j] || ch == channels[j] - 1 || ch == channels[j] + 1) {
+        rssi_sum[j] += abs(rssi);  // Stronger signals contribute more
+      }
+    }
+  }
+
+  // Find channel with minimum RSSI sum
+  int best_idx = 0;
+  for (int j = 1; j < 3; ++j) {
+    if (rssi_sum[j] < rssi_sum[best_idx]) {
+      best_idx = j;
+    }
+  }
+  return channels[best_idx];
+}
+
+void channel_hopper_task(void *pvParameter) {
+  while (1) {
+    // Check if any stations are connected
+    wifi_sta_list_t sta_list;
+    esp_err_t err = esp_wifi_ap_get_sta_list(&sta_list);
+    if (err == ESP_OK && sta_list.num == 0) {
+      // No clients connected, perform scan and switch channel
+      ESP_LOGI(TAG, "No clients connected, scanning for best channel...");
+      uint8_t curr_channel;
+      wifi_second_chan_t second_channel;
+      ESP_ERROR_CHECK(esp_wifi_get_channel(&curr_channel, &second_channel));
+      int best_channel = choose_best_channel();
+      if (best_channel != curr_channel) {
+        // Switch back to AP mode and set new channel
+        ESP_ERROR_CHECK(
+            esp_wifi_set_channel(best_channel, WIFI_SECOND_CHAN_NONE));
+        ESP_LOGI(TAG, "Switched AP to channel %d", best_channel);
+      } else {
+        ESP_LOGI(TAG, "Current channel %d is still best", best_channel);
+      }
+    } else {
+      ESP_LOGI(TAG, "Clients connected, skipping channel switch");
+    }
+    // Wait CHANNEL_SCAN_INTERVAL_MS before next check
+    vTaskDelay(pdMS_TO_TICKS(CHANNEL_SCAN_INTERVAL_MS));
+  }
+}
+
 void app_main(void) {
   ESP_ERROR_CHECK(nvs_flash_init());
   init_spiffs();
@@ -193,4 +257,5 @@ void app_main(void) {
   xTaskCreate(captive_dns_task, "captive_dns", 2048, NULL, 5, NULL);
   i2s_audio_init();
   start_http_server();
+  xTaskCreate(channel_hopper_task, "channel_hopper", 4096, NULL, 4, NULL);
 }
