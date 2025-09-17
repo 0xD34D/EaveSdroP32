@@ -195,11 +195,24 @@ uint8_t choose_best_channel() {
   uint8_t channels[3] = {1, 6, 11};  // Non-overlapping channels
   int rssi_sum[3] = {0, 0, 0};
 
-  ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true));
+  esp_err_t err;
+  err = esp_wifi_scan_start(&scan_config, true);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "WiFi scan failed: %s", esp_err_to_name(err));
+    return 1;  // Default to channel 1 on scan failure
+  }
   uint16_t ap_count = 0;
-  ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+  err = esp_wifi_scan_get_ap_num(&ap_count);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to get AP count: %s", esp_err_to_name(err));
+    return 1;  // Default to channel 1 on failure
+  }
   if (ap_count > max_aps) ap_count = max_aps;
-  ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_records));
+  err = esp_wifi_scan_get_ap_records(&ap_count, ap_records);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to get AP records: %s", esp_err_to_name(err));
+    return 1;  // Default to channel 1 on failure
+  }
 
   for (int i = 0; i < ap_count; ++i) {
     uint8_t ch = ap_records[i].primary;
@@ -232,12 +245,20 @@ void channel_hopper_task(void *pvParameter) {
       ESP_LOGI(TAG, "No clients connected, scanning for best channel...");
       uint8_t curr_channel;
       wifi_second_chan_t second_channel;
-      ESP_ERROR_CHECK(esp_wifi_get_channel(&curr_channel, &second_channel));
+      err = esp_wifi_get_channel(&curr_channel, &second_channel);
+      if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get current channel: %s",
+                 esp_err_to_name(err));
+        continue;
+      }
       int best_channel = choose_best_channel();
       if (best_channel != curr_channel) {
         // Switch back to AP mode and set new channel
-        ESP_ERROR_CHECK(
-            esp_wifi_set_channel(best_channel, WIFI_SECOND_CHAN_NONE));
+        err = esp_wifi_set_channel(best_channel, WIFI_SECOND_CHAN_NONE);
+        if (err != ESP_OK) {
+          ESP_LOGE(TAG, "Failed to set channel: %s", esp_err_to_name(err));
+          continue;
+        }
         ESP_LOGI(TAG, "Switched AP to channel %d", best_channel);
       } else {
         ESP_LOGI(TAG, "Current channel %d is still best", best_channel);
