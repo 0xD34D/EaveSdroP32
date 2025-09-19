@@ -143,9 +143,64 @@ static esp_err_t captive_portal_handler(httpd_req_t *req) {
 static esp_err_t config_get_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "application/json");
   char buf[64];
-  snprintf(buf, sizeof(buf), "{\"sample_rate\":%d}",
-           CONFIG_AUDIO_STREAM_SAMPLE_RATE);
+  int sr = i2s_audio_get_sample_rate();
+  snprintf(buf, sizeof(buf), "{\"sample_rate\":%d}", sr);
   httpd_resp_send(req, buf, strlen(buf));
+  return ESP_OK;
+}
+
+static const int allowed_sample_rates[] = {8000, 16000, 22050, 32000, 44100, 48000};
+
+static bool is_allowed_rate(int r) {
+  for (size_t i = 0; i < sizeof(allowed_sample_rates) / sizeof(allowed_sample_rates[0]); ++i) {
+    if (allowed_sample_rates[i] == r) return true;
+  }
+  return false;
+}
+
+static esp_err_t config_post_handler(httpd_req_t *req) {
+  // Read body
+  char buf[64];
+  int ret = httpd_req_recv(req, buf, sizeof(buf)-1);
+  if (ret <= 0) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  buf[ret] = '\0';
+
+  // Simple parse for JSON like {"sample_rate":44100}
+  int new_rate = 0;
+  if (sscanf(buf, "{ \"sample_rate\" : %d }", &new_rate) != 1) {
+    // try without spaces
+    if (sscanf(buf, "{\"sample_rate\":%d}", &new_rate) != 1) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"error\":\"invalid_json\"}", HTTPD_RESP_USE_STRLEN);
+      return ESP_FAIL;
+    }
+  }
+
+  if (!is_allowed_rate(new_rate)) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"error\":\"unsupported_rate\"}", HTTPD_RESP_USE_STRLEN);
+    return ESP_FAIL;
+  }
+
+  // If streaming, do not allow change
+  if (ws_is_streaming()) {
+    httpd_resp_set_status(req, "409 Conflict");
+    httpd_resp_send(req, "{\"error\":\"streaming\"}", HTTPD_RESP_USE_STRLEN);
+    return ESP_FAIL;
+  }
+
+  esp_err_t err = i2s_audio_set_sample_rate(new_rate);
+  if (err != ESP_OK) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    httpd_resp_send(req, "{\"error\":\"reconfigure_failed\"}", HTTPD_RESP_USE_STRLEN);
+    return ESP_FAIL;
+  }
+
+  httpd_resp_set_status(req, "204 No Content");
+  httpd_resp_send(req, NULL, 0);
   return ESP_OK;
 }
 
@@ -183,6 +238,10 @@ void start_http_server() {
     httpd_uri_t config_uri = {
         .uri = "/config", .method = HTTP_GET, .handler = config_get_handler};
     httpd_register_uri_handler(server, &config_uri);
+  // POST handler for changing sample rate
+  httpd_uri_t config_post_uri = {
+    .uri = "/config", .method = HTTP_POST, .handler = config_post_handler};
+  httpd_register_uri_handler(server, &config_post_uri);
 
     start_websocket_server(server);
   }

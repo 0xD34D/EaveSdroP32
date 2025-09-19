@@ -87,6 +87,17 @@
 
 <body>
   <h1>EaveSdroP32 Audio Stream</h1>
+  <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;">
+    <label for="sampleRateSelect">Sample rate:</label>
+    <select id="sampleRateSelect">
+      <option value="8000">8000</option>
+      <option value="16000">16000</option>
+      <option value="22050">22050</option>
+      <option value="32000">32000</option>
+      <option value="44100">44100</option>
+      <option value="48000">48000</option>
+    </select>
+  </div>
   <button id="streamButton" onclick="toggleStream()">Start Stream</button>
   <script>
     let audioContext;
@@ -106,10 +117,34 @@
           const config = await response.json();
           if (config.sample_rate) {
             sampleRate = config.sample_rate;
+            const sel = document.getElementById('sampleRateSelect');
+            if (sel) sel.value = String(sampleRate);
           }
         }
       } catch (e) {
         console.warn("Could not fetch sample rate, using default:", sampleRate);
+      }
+    }
+
+    // POST new sample rate to server. Server will reject while streaming.
+    async function setSampleRate(rate) {
+      try {
+        const body = JSON.stringify({ sample_rate: rate });
+        const resp = await fetch('/config', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
+        if (resp.status === 204) {
+          console.log('Sample rate changed to', rate);
+          sampleRate = rate;
+        } else if (resp.status === 409) {
+          alert('Cannot change sample rate while streaming');
+          // revert select to current known value
+          const sel = document.getElementById('sampleRateSelect');
+          if (sel) sel.value = String(sampleRate);
+        } else {
+          const txt = await resp.text();
+          console.warn('Failed to set sample rate', resp.status, txt);
+        }
+      } catch (e) {
+        console.warn('Error setting sample rate', e);
       }
     }
 
@@ -175,6 +210,9 @@
           void startButton.offsetHeight;
           startButton.innerText = 'Stop Stream';
           startButton.disabled = false;
+          // disable sample rate selector while streaming
+          const sel = document.getElementById('sampleRateSelect');
+          if (sel) sel.disabled = true;
         });
       };
 
@@ -217,6 +255,9 @@
       startButton.classList.remove('recording');
       startButton.innerText = 'Start Stream';
       startButton.disabled = false;
+      // enable sample rate selector when not streaming
+      const sel = document.getElementById('sampleRateSelect');
+      if (sel) sel.disabled = false;
     }
 
     // Toggle handler called from the button
@@ -232,6 +273,20 @@
         stop();
       }
     }
+
+    // Ensure DOM elements exist before wiring events and fetching server config
+    document.addEventListener('DOMContentLoaded', () => {
+      const sel = document.getElementById('sampleRateSelect');
+      if (sel) {
+        sel.addEventListener('change', (e) => {
+          const v = Number(e.target.value);
+          setSampleRate(v);
+        });
+      }
+
+      // Populate select with server-configured sample rate on initial load
+      getSampleRate();
+    });
   </script>
 </body>
 
