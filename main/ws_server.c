@@ -30,9 +30,7 @@ static esp_err_t ws_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
-bool ws_is_streaming(void) {
-  return g_client_fd != -1;
-}
+bool ws_is_streaming(void) { return g_client_fd != -1; }
 
 static void audio_stream_task(void *arg) {
   int32_t *buffer = malloc(AUDIO_BUFFER_SIZE);

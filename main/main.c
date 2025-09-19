@@ -149,10 +149,13 @@ static esp_err_t config_get_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
-static const int allowed_sample_rates[] = {8000, 16000, 22050, 32000, 44100, 48000};
+static const int allowed_sample_rates[] = {8000,  16000, 22050,
+                                           32000, 44100, 48000};
 
 static bool is_allowed_rate(int r) {
-  for (size_t i = 0; i < sizeof(allowed_sample_rates) / sizeof(allowed_sample_rates[0]); ++i) {
+  for (size_t i = 0;
+       i < sizeof(allowed_sample_rates) / sizeof(allowed_sample_rates[0]);
+       ++i) {
     if (allowed_sample_rates[i] == r) return true;
   }
   return false;
@@ -161,7 +164,7 @@ static bool is_allowed_rate(int r) {
 static esp_err_t config_post_handler(httpd_req_t *req) {
   // Read body
   char buf[64];
-  int ret = httpd_req_recv(req, buf, sizeof(buf)-1);
+  int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
   if (ret <= 0) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -174,14 +177,16 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
     // try without spaces
     if (sscanf(buf, "{\"sample_rate\":%d}", &new_rate) != 1) {
       httpd_resp_set_status(req, "400 Bad Request");
-      httpd_resp_send(req, "{\"error\":\"invalid_json\"}", HTTPD_RESP_USE_STRLEN);
+      httpd_resp_send(req, "{\"error\":\"invalid_json\"}",
+                      HTTPD_RESP_USE_STRLEN);
       return ESP_FAIL;
     }
   }
 
   if (!is_allowed_rate(new_rate)) {
     httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, "{\"error\":\"unsupported_rate\"}", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, "{\"error\":\"unsupported_rate\"}",
+                    HTTPD_RESP_USE_STRLEN);
     return ESP_FAIL;
   }
 
@@ -195,7 +200,8 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
   esp_err_t err = i2s_audio_set_sample_rate(new_rate);
   if (err != ESP_OK) {
     httpd_resp_set_status(req, "500 Internal Server Error");
-    httpd_resp_send(req, "{\"error\":\"reconfigure_failed\"}", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, "{\"error\":\"reconfigure_failed\"}",
+                    HTTPD_RESP_USE_STRLEN);
     return ESP_FAIL;
   }
 
@@ -238,10 +244,10 @@ void start_http_server() {
     httpd_uri_t config_uri = {
         .uri = "/config", .method = HTTP_GET, .handler = config_get_handler};
     httpd_register_uri_handler(server, &config_uri);
-  // POST handler for changing sample rate
-  httpd_uri_t config_post_uri = {
-    .uri = "/config", .method = HTTP_POST, .handler = config_post_handler};
-  httpd_register_uri_handler(server, &config_post_uri);
+    // POST handler for changing sample rate
+    httpd_uri_t config_post_uri = {
+        .uri = "/config", .method = HTTP_POST, .handler = config_post_handler};
+    httpd_register_uri_handler(server, &config_post_uri);
 
     start_websocket_server(server);
   }
